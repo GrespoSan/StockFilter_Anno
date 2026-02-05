@@ -3,7 +3,7 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
 
-st.title("Confronto Prezzo Chiusura Ieri vs Minimo Anno Precedente")
+st.title("Confronto Prezzo Chiusura vs Minimo Anno Precedente")
 
 # Caricamento file simboli
 uploaded_file = st.file_uploader("Carica un file .txt con i simboli (uno per riga)", type="txt")
@@ -15,9 +15,12 @@ if uploaded_file:
     st.write(f"Simboli caricati: {symbols}")
 
     # Soglia percentuale opzionale
-    threshold = st.number_input("Mostra solo titoli entro X% dal minimo dell'anno scorso", min_value=0.0, value=5.0, step=0.1)
+    threshold = st.number_input(
+        "Mostra solo titoli entro ±X% dal minimo dell'anno scorso", 
+        min_value=0.0, value=5.0, step=0.1
+    )
 
-    # Calcolo date
+    # Date di riferimento
     yesterday = datetime.today() - timedelta(days=1)
     yesterday_str = yesterday.strftime('%Y-%m-%d')
 
@@ -28,7 +31,7 @@ if uploaded_file:
     results = {}
 
     for symbol in symbols:
-        # Dati anno precedente
+        # Scarica dati anno precedente
         data_last_year = yf.download(symbol, start=start_date, end=end_date)
         if data_last_year.empty:
             st.warning(f"Nessun dato disponibile per {symbol} nell'anno precedente")
@@ -36,13 +39,13 @@ if uploaded_file:
 
         min_low = data_last_year['Low'].min()
 
-        # Dati chiusura ieri
-        data_yesterday = yf.download(symbol, start=yesterday_str, end=yesterday_str)
+        # Scarica dati fino a ieri e prendi l'ultima chiusura disponibile
+        data_yesterday = yf.download(symbol, end=yesterday_str)
         if data_yesterday.empty:
-            st.warning(f"Nessun dato di chiusura disponibile per {symbol} ieri")
+            st.warning(f"Nessun dato di chiusura disponibile per {symbol} fino a ieri")
             continue
 
-        close_yesterday = data_yesterday['Close'][0]
+        close_yesterday = data_yesterday['Close'][-1]
 
         diff_pct = ((close_yesterday - min_low) / min_low) * 100
 
@@ -50,7 +53,7 @@ if uploaded_file:
         if abs(diff_pct) <= threshold:
             results[symbol] = {
                 'Min_Anno_Precedente': min_low,
-                'Chiusura_Ieri': close_yesterday,
+                'Chiusura_Fino_Ieri': close_yesterday,
                 'Diff_%': diff_pct
             }
 
