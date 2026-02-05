@@ -27,11 +27,12 @@ results = {}
 
 for symbol in symbols:
     try:
-        # Minimo anno precedente
+        # Dati anno precedente
         data_last_year = yf.download(symbol, start=start_date, end=end_date)
         if data_last_year.empty:
             st.warning(f"Nessun dato disponibile per {symbol} nell'anno precedente")
             continue
+
         min_low = data_last_year['Low'].min()
 
         # Ultimi 30 giorni per prendere l'ultima chiusura valida
@@ -41,13 +42,13 @@ for symbol in symbols:
             st.warning(f"Nessun dato di chiusura disponibile per {symbol} negli ultimi 30 giorni")
             continue
 
-        # Prendi la chiusura
-        if 'Close' in hist.columns:
-            close_yesterday = hist.iloc[-1]['Close']
-        elif 'Adj Close' in hist.columns:
-            close_yesterday = hist.iloc[-1]['Adj Close']
+        # Prendi l'ultima chiusura valida
+        if 'Close' in hist.columns and not hist['Close'].dropna().empty:
+            close_yesterday = hist['Close'].dropna().iloc[-1]
+        elif 'Adj Close' in hist.columns and not hist['Adj Close'].dropna().empty:
+            close_yesterday = hist['Adj Close'].dropna().iloc[-1]
         else:
-            st.warning(f"Colonna Close/Adj Close non trovata per {symbol}")
+            st.warning(f"Colonna Close/Adj Close non valida per {symbol}")
             continue
 
         diff_pct = ((close_yesterday - min_low) / min_low) * 100
