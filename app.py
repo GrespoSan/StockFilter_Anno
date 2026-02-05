@@ -9,18 +9,14 @@ st.title("Confronto Prezzo Chiusura vs Minimo Anno Precedente")
 uploaded_file = st.file_uploader("Carica un file .txt con i simboli (uno per riga)", type="txt")
 
 if uploaded_file:
-    # Legge i simboli dal file
     symbols = [line.strip().upper() for line in uploaded_file.read().decode("utf-8").splitlines() if line.strip()]
-    
     st.write(f"Simboli caricati: {symbols}")
 
-    # Soglia percentuale opzionale
     threshold = st.number_input(
         "Mostra solo titoli entro ±X% dal minimo dell'anno scorso", 
         min_value=0.0, value=5.0, step=0.1
     )
 
-    # Date di riferimento
     yesterday = datetime.today() - timedelta(days=1)
     last_year = yesterday.year - 1
     start_date = f"{last_year}-01-01"
@@ -38,23 +34,28 @@ if uploaded_file:
 
             min_low = data_last_year['Low'].min()
 
-            # Dati più recenti usando Ticker.history() → evita KeyError
+            # Ultimi 10 giorni per essere sicuri di avere una chiusura valida
             ticker = yf.Ticker(symbol)
-            hist = ticker.history(end=yesterday + timedelta(days=1))  # include fino a ieri
+            hist = ticker.history(period="10d")
             if hist.empty:
-                st.warning(f"Nessun dato di chiusura disponibile per {symbol} fino a ieri")
+                st.warning(f"Nessun dato di chiusura disponibile per {symbol} negli ultimi 10 giorni")
                 continue
 
-            # Prendi l'ultima chiusura disponibile
-            close_yesterday = hist['Close'][-1]
+            # Prendi la colonna 'Close' se esiste, altrimenti 'Adj Close'
+            if 'Close' in hist.columns:
+                close_yesterday = hist['Close'][-1]
+            elif 'Adj Close' in hist.columns:
+                close_yesterday = hist['Adj Close'][-1]
+            else:
+                st.warning(f"Colonna Close/Adj Close non trovata per {symbol}")
+                continue
 
             diff_pct = ((close_yesterday - min_low) / min_low) * 100
 
-            # Salva solo se entro la soglia scelta
             if abs(diff_pct) <= threshold:
                 results[symbol] = {
                     'Min_Anno_Precedente': min_low,
-                    'Chiusura_Fino_Ieri': close_yesterday,
+                    'Chiusura_Recente': close_yesterday,
                     'Diff_%': diff_pct
                 }
 
@@ -63,10 +64,10 @@ if uploaded_file:
             continue
 
     if results:
-        df_results = pd.DataFrame(results).T
-        df_results = df_results.sort_values(by='Diff_%')
+        df_results = pd.DataFrame(results).T.sort_values(by='Diff_%')
         st.dataframe(df_results)
     else:
         st.info(f"Nessun titolo entro ±{threshold}% dal minimo dell'anno scorso.")
+
 else:
     st.info("Carica un file .txt per iniziare.")
