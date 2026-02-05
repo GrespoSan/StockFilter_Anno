@@ -4,34 +4,33 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime
 
+# Configurazione Pagina
 st.set_page_config(page_title="Scanner Minimi Pro", layout="wide")
 
 # --- Inizializzazione Session State ---
 if 'df_risultati' not in st.session_state:
     st.session_state.df_risultati = pd.DataFrame()
 
-st.title("📉 Scanner Minimi Annuali + Caricamento Liste")
+st.title("📉 Scanner Minimi Annuali")
 
 # --- Sidebar ---
-st.sidebar.header("Configurazione Input")
+st.sidebar.header("Configurazione")
 
-# 1. Opzione Caricamento File
-uploaded_file = st.sidebar.file_uploader("Carica un file .txt con i ticker", type="txt")
+# Caricamento File o Inserimento Manuale
+uploaded_file = st.sidebar.file_uploader("1. Carica file .txt", type="txt")
+manual_input = st.sidebar.text_area("2. Oppure inserisci qui (es: AAPL, TSLA)", "AAPL, MSFT, GOOGL, NVDA, TSLA, AMZN, NFLX, META")
 
-# 2. Area di testo (usata se non c'è il file o per aggiunte rapide)
-manual_input = st.sidebar.text_area("Oppure inserisci manualmente (es: AAPL, TSLA)", "AAPL, MSFT, GOOGL")
-
-# 3. Parametri tecnici
-threshold = st.sidebar.slider("Distanza massima dal minimo (%)", 0, 50, 10)
+# SOGLIA % - Questo valore controlla tutto il filtro
+threshold = st.sidebar.slider("Mostra solo titoli entro il (%):", 0, 50, 5)
 
 today = datetime.today()
 prev_year = today.year - 1
+st.sidebar.info(f"Confronto con minimi del **{prev_year}**")
 
 def fetch_data(ticker_list_raw):
-    """Elabora la lista di ticker e scarica i dati"""
+    """Scarica i dati e calcola le distanze"""
     results = []
-    
-    # Pulizia della lista: gestisce virgole, spazi e a capo
+    # Pulizia input
     tickers = ticker_list_raw.replace('\n', ',').replace(' ', ',').split(',')
     tickers = [t.strip().upper() for t in tickers if t.strip()]
     
@@ -42,11 +41,11 @@ def fetch_data(ticker_list_raw):
     status_text = st.empty()
     
     for i, ticker in enumerate(tickers):
-        status_text.text(f"Analisi in corso: {ticker} ({i+1}/{len(tickers)})")
+        status_text.text(f"Analisi: {ticker} ({i+1}/{len(tickers)})")
         try:
+            # Scarichiamo dati (auto_adjust=False per avere Low reale come TradingView)
             data = yf.download(ticker, start=f"{prev_year}-01-01", progress=False, auto_adjust=False)
             
-            # Fix MultiIndex
             if isinstance(data.columns, pd.MultiIndex):
                 data.columns = data.columns.get_level_values(0)
 
@@ -55,13 +54,14 @@ def fetch_data(ticker_list_raw):
                 if not data_prev.empty:
                     min_abs = float(data_prev['Low'].min())
                     current_price = float(data['Close'].iloc[-1])
+                    # Calcolo distanza percentuale
                     dist_perc = ((current_price - min_abs) / min_abs) * 100
                     
                     results.append({
                         "Ticker": ticker,
                         "Prezzo": current_price,
-                        "Minimo_Anno_Prec": min_abs,
-                        "Distanza_Perc": dist_perc
+                        "Min_Prev_Year": min_abs,
+                        "Dist_Perc": dist_perc
                     })
         except:
             continue
@@ -71,36 +71,32 @@ def fetch_data(ticker_list_raw):
     status_text.empty()
     return pd.DataFrame(results)
 
-# --- Logica di attivazione ---
-if st.sidebar.button("Avvia Scansione", type="primary"):
-    input_final = ""
-    
-    # Se l'utente ha caricato un file, usa quello
-    if uploaded_file is not None:
-        input_final = uploaded_file.read().decode("utf-8")
+# --- Azione Scansione ---
+if st.sidebar.button("AVVIA SCANSIONE", type="primary"):
+    input_data = uploaded_file.read().decode("utf-8") if uploaded_file else manual_input
+    if input_data:
+        st.session_state.df_risultati = fetch_data(input_data)
     else:
-        # Altrimenti usa l'input manuale
-        input_final = manual_input
-        
-    if input_final:
-        st.session_state.df_risultati = fetch_data(input_final)
-    else:
-        st.error("Inserisci almeno un ticker o carica un file!")
+        st.error("Inserisci dei ticker!")
 
-# --- Visualizzazione Risultati ---
-df = st.session_state.df_risultati
+# --- LOGICA DI FILTRO RIGOROSA ---
+df_all = st.session_state.df_risultati
 
-if not df.empty:
-    filtered_df = df[df["Distanza_Perc"] <= threshold].sort_values("Distanza_Perc").copy()
-    
-    st.subheader(f"🔍 Titoli filtrati (entro il {threshold}% dal minimo {prev_year})")
+if not df_all.empty:
+    # FILTRO: Teniamo solo quelli <= soglia (es: se soglia è 5%, esclude quelli al 6%)
+    filtered_df = df_all[df_all["Dist_Perc"] <= threshold].sort_values("Dist_Perc").copy()
     
     if not filtered_df.empty:
+        st.success(f"Trovati {len(filtered_df)} titoli che rispettano il criterio (≤ {threshold}%)")
+        
+        # 1. Tabella Formattata
+        display_df = filtered_df.rename(columns={
+            "Min_Prev_Year": f"Minimo {prev_year}",
+            "Dist_Perc": "Distanza %"
+        })
+        
         st.dataframe(
-            filtered_df.rename(columns={
-                "Minimo_Anno_Prec": f"Minimo {prev_year}",
-                "Distanza_Perc": "Distanza %"
-            }).style.format({
+            display_df.style.format({
                 "Prezzo": "{:.2f}",
                 f"Minimo {prev_year}": "{:.2f}",
                 "Distanza %": "{:.2f}%"
@@ -109,30 +105,32 @@ if not df.empty:
             hide_index=True
         )
 
-        # --- Grafico ---
+        # 2. Pulsante Export (scarica solo i filtrati)
+        csv = filtered_df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Scarica questi risultati (CSV)", csv, "risultati_filtrati.csv", "text/csv")
+
+        # 3. Grafico (il menu a tendina mostra SOLO i filtrati)
         st.divider()
-        st.subheader("📊 Analisi Tecnica Dettagliata")
-        scelta = st.selectbox("Seleziona un titolo per il grafico:", filtered_df["Ticker"].unique())
+        st.subheader("Analisi Grafica")
+        scelta = st.selectbox("Seleziona tra i titoli filtrati:", filtered_df["Ticker"].unique())
 
         if scelta:
             dati_plot = yf.download(scelta, start=f"{prev_year}-01-01", progress=False)
             if isinstance(dati_plot.columns, pd.MultiIndex):
                 dati_plot.columns = dati_plot.columns.get_level_values(0)
+            
+            # Recupero il valore del minimo dal dataframe filtrato
+            val_min = filtered_df.loc[filtered_df["Ticker"] == scelta, "Min_Prev_Year"].values[0]
 
-            valore_minimo = filtered_df.loc[filtered_df["Ticker"] == scelta, "Minimo_Anno_Prec"].values[0]
-
-            fig = go.Figure()
-            fig.add_trace(go.Candlestick(
+            fig = go.Figure(data=[go.Candlestick(
                 x=dati_plot.index, open=dati_plot['Open'], high=dati_plot['High'],
                 low=dati_plot['Low'], close=dati_plot['Close'], name=scelta
-            ))
-            fig.add_hline(y=valore_minimo, line_dash="dash", line_color="red", 
-                          annotation_text=f"Supporto {prev_year}", annotation_position="bottom right")
-            
-            fig.update_layout(title=f"{scelta} - Test del Minimo", xaxis_rangeslider_visible=False, 
-                              height=500, template="plotly_dark")
+            )])
+            fig.add_hline(y=val_min, line_dash="dash", line_color="red", annotation_text="Supporto Anno Prec.")
+            fig.update_layout(title=f"{scelta} (Min {prev_year}: {val_min:.2f})", 
+                              xaxis_rangeslider_visible=False, template="plotly_dark", height=500)
             st.plotly_chart(fig, use_container_width=True)
     else:
-        st.warning(f"Nessun titolo trovato con distanza inferiore al {threshold}%.")
+        st.warning(f"Nessun titolo trovato entro il {threshold}%. Prova ad aumentare la soglia.")
 else:
-    st.info("Carica un file o inserisci i ticker, poi clicca su 'Avvia Scansione'.")
+    st.info("Configura i ticker e clicca su 'AVVIA SCANSIONE'.")
