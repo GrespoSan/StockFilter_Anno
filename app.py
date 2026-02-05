@@ -5,138 +5,138 @@ import plotly.graph_objects as go
 from datetime import datetime
 
 # Configurazione Pagina
-st.set_page_config(page_title="Scanner Minimi Pro", layout="wide")
+st.set_page_config(page_title="Scanner Minimi & Ritest", layout="wide")
 
-# --- Inizializzazione Session State ---
+# --- Session State ---
 if 'df_risultati' not in st.session_state:
-    # Inizializziamo con colonne predefinite per evitare KeyError
-    st.session_state.df_risultati = pd.DataFrame(columns=["Ticker", "Prezzo", "Min_Prev_Year", "Dist_Perc"])
+    st.session_state.df_risultati = pd.DataFrame()
 
-st.title("📉 Scanner Minimi Annuali")
+st.title("📉 Scanner Supporti: Minimi {prev_year} & Ritest 2026")
 
 # --- Sidebar ---
-st.sidebar.header("Configurazione")
+st.sidebar.header("Parametri")
+uploaded_file = st.sidebar.file_uploader("Carica .txt", type="txt")
+manual_input = st.sidebar.text_area("Ticker manuali", "AAPL, MSFT, TSLA, NVDA, PYPL, DIS, INTC")
 
-uploaded_file = st.sidebar.file_uploader("1. Carica file .txt", type="txt")
-manual_input = st.sidebar.text_area("2. Oppure inserisci qui", "AAPL, MSFT, GOOGL, NVDA, TSLA")
+# Parametri Filtro
+threshold = st.sidebar.slider("Distanza dal minimo (%)", 0.0, 10.0, 3.0, step=0.5)
+st.sidebar.markdown("---")
+st.sidebar.subheader("Logica Ritest")
+retest_zone = st.sidebar.slider("Soglia zona ritest (%)", 0.1, 5.0, 1.5, help="Entro quale % dal minimo consideriamo un 'tocco'?")
 
-threshold = st.sidebar.slider("Mostra solo titoli entro il (%):", 0, 50, 5)
-
+# Date
 today = datetime.today()
-prev_year = today.year - 1
+curr_year = today.year # 2026
+prev_year = curr_year - 1 # 2025
 
 def fetch_data(ticker_list_raw):
     results = []
     tickers = ticker_list_raw.replace('\n', ',').replace(' ', ',').split(',')
     tickers = [t.strip().upper() for t in tickers if t.strip()]
     
-    if not tickers:
-        return pd.DataFrame(columns=["Ticker", "Prezzo", "Min_Prev_Year", "Dist_Perc"])
+    if not tickers: return pd.DataFrame()
 
-    progress = st.progress(0)
+    prog_bar = st.progress(0)
     status_text = st.empty()
     
     for i, ticker in enumerate(tickers):
-        status_text.text(f"Analisi: {ticker} ({i+1}/{len(tickers)})")
+        status_text.text(f"Analisi {ticker}...")
         try:
-            # auto_adjust=False per mantenere i prezzi OHLC originali (TradingView style)
+            # Scarichiamo dati dal 2025 ad oggi
             data = yf.download(ticker, start=f"{prev_year}-01-01", progress=False, auto_adjust=False)
             
             if isinstance(data.columns, pd.MultiIndex):
                 data.columns = data.columns.get_level_values(0)
 
             if not data.empty:
+                # 1. Minimo Anno Precedente (2025)
                 data_prev = data[data.index.year == prev_year]
-                if not data_prev.empty:
-                    min_abs = float(data_prev['Low'].min())
-                    current_price = float(data['Close'].iloc[-1])
-                    
-                    # Formula: $Dist \% = \frac{Prezzo - Min}{Min} \times 100$
-                    dist_perc = ((current_price - min_abs) / min_abs) * 100
-                    
-                    results.append({
-                        "Ticker": ticker,
-                        "Prezzo": current_price,
-                        "Min_Prev_Year": min_abs,
-                        "Dist_Perc": dist_perc
-                    })
-        except Exception:
+                if data_prev.empty: continue
+                min_2025 = float(data_prev['Low'].min())
+                
+                # 2. Dati Anno Corrente (2026)
+                data_curr = data[data.index.year == curr_year]
+                if data_curr.empty: continue
+                
+                last_price = float(data_curr['Close'].iloc[-1])
+                dist_perc = ((last_price - min_2025) / min_2025) * 100
+                
+                # 3. LOGICA RITEST: quante volte il Low del 2026 è entrato nella zona?
+                # Zona = Min 2025 * (1 + soglia zone)
+                upper_bound = min_2025 * (1 + (retest_zone / 100))
+                # Contiamo i giorni in cui il minimo di giornata ha toccato la zona
+                touches = data_curr[data_curr['Low'] <= upper_bound]
+                num_retests = len(touches)
+
+                results.append({
+                    "Ticker": ticker,
+                    "Prezzo": last_price,
+                    "Min_2025": min_2025,
+                    "Distanza_%": dist_perc,
+                    "Num_Ritest_2026": num_retests
+                })
+        except:
             continue
-        progress.progress((i + 1) / len(tickers))
+        prog_bar.progress((i + 1) / len(tickers))
     
-    progress.empty()
+    prog_bar.empty()
     status_text.empty()
-    
-    # Se results è vuoto, restituiamo un DF con colonne ma senza righe
-    if not results:
-        return pd.DataFrame(columns=["Ticker", "Prezzo", "Min_Prev_Year", "Dist_Perc"])
-        
     return pd.DataFrame(results)
 
-# --- Azione Scansione ---
-if st.sidebar.button("AVVIA SCANSIONE", type="primary"):
-    input_data = ""
-    if uploaded_file:
-        input_data = uploaded_file.read().decode("utf-8")
-    else:
-        input_data = manual_input
-        
+# --- Pulsante Esecuzione ---
+if st.sidebar.button("ANALIZZA MERCATO", type="primary"):
+    input_data = uploaded_file.read().decode("utf-8") if uploaded_file else manual_input
     if input_data.strip():
         st.session_state.df_risultati = fetch_data(input_data)
-    else:
-        st.error("Inserisci dei ticker!")
 
-# --- LOGICA DI VISUALIZZAZIONE ---
-df_all = st.session_state.df_risultati
+# --- Risultati ---
+df_res = st.session_state.df_risultati
 
-# Controllo se la colonna esiste (evita il KeyError)
-if not df_all.empty and "Dist_Perc" in df_all.columns:
-    
-    # Filtro rigoroso
-    filtered_df = df_all[df_all["Dist_Perc"] <= threshold].sort_values("Dist_Perc").copy()
-    
-    if not filtered_df.empty:
-        st.success(f"Trovati {len(filtered_df)} titoli entro la soglia del {threshold}%")
+if not df_res.empty:
+    # Applichiamo il filtro distanza
+    filtered = df_res[df_res["Distanza_%"] <= threshold].sort_values("Num_Ritest_2026", ascending=False)
+
+    if not filtered.empty:
+        st.subheader(f"Titoli nel range del {threshold}% dal minimo {prev_year}")
         
-        # Tabella
+        # Coloriamo la colonna ritest per evidenziare i ritest multipli
         st.dataframe(
-            filtered_df.rename(columns={
-                "Min_Prev_Year": f"Minimo {prev_year}",
-                "Dist_Perc": "Distanza %"
-            }).style.format({
-                "Prezzo": "{:.2f}",
-                f"Minimo {prev_year}": "{:.2f}",
-                "Distanza %": "{:.2f}%"
-            }), 
-            use_container_width=True, 
-            hide_index=True
+            filtered.style.background_gradient(subset=["Num_Ritest_2026"], cmap="YlGn")
+            .format({"Prezzo": "{:.2f}", "Min_2025": "{:.2f}", "Distanza_%": "{:.2f}%"}),
+            use_container_width=True, hide_index=True
         )
 
-        # Download CSV
-        csv = filtered_df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Scarica Risultati (CSV)", csv, "report_minimi.csv", "text/csv")
-
-        # Grafico
         st.divider()
-        scelta = st.selectbox("Analisi Grafica:", filtered_df["Ticker"].unique())
+        
+        # Selezione Grafico
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            scelta = st.selectbox("Dettaglio Titolo:", filtered["Ticker"].unique())
+            info = filtered[filtered["Ticker"] == scelta].iloc[0]
+            st.metric("Ritest nel 2026", int(info['Num_Ritest_2026']))
+            st.write(f"Il prezzo ha toccato la zona di supporto (entro il {retest_zone}%) per **{int(info['Num_Ritest_2026'])}** giorni quest'anno.")
 
-        if scelta:
+        with col2:
             dati_plot = yf.download(scelta, start=f"{prev_year}-01-01", progress=False)
-            if isinstance(dati_plot.columns, pd.MultiIndex):
-                dati_plot.columns = dati_plot.columns.get_level_values(0)
+            if isinstance(dati_plot.columns, pd.MultiIndex): dati_plot.columns = dati_plot.columns.get_level_values(0)
             
-            val_min = filtered_df.loc[filtered_df["Ticker"] == scelta, "Min_Prev_Year"].values[0]
-
             fig = go.Figure(data=[go.Candlestick(
                 x=dati_plot.index, open=dati_plot['Open'], high=dati_plot['High'],
                 low=dati_plot['Low'], close=dati_plot['Close'], name=scelta
             )])
-            fig.add_hline(y=val_min, line_dash="dash", line_color="red", annotation_text=f"Min {prev_year}")
-            fig.update_layout(title=f"{scelta} vs Minimo {prev_year}", 
+            
+            # Linea Minimo 2025
+            fig.add_hline(y=info['Min_2025'], line_dash="dash", line_color="red", 
+                          annotation_text="SUPPORTO 2025", annotation_position="bottom right")
+            
+            # Fascia Ritest (Zona)
+            fig.add_hrect(y0=info['Min_2025'], y1=info['Min_2025']*(1+(retest_zone/100)), 
+                          fillcolor="green", opacity=0.1, line_width=0, name="Zona Ritest")
+
+            fig.update_layout(title=f"{scelta}: Analisi Supporto e Ritest", 
                               xaxis_rangeslider_visible=False, template="plotly_dark", height=500)
             st.plotly_chart(fig, use_container_width=True)
     else:
-        st.warning(f"Nessun titolo trovato entro il {threshold}%. Prova ad aumentare la soglia.")
+        st.warning("Nessun titolo trovato con i parametri attuali.")
 else:
-    if not df_all.empty:
-        st.info("Inizia una scansione per visualizzare i risultati.")
+    st.info("Avvia la scansione per vedere i dati.")
