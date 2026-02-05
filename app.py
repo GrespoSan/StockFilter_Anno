@@ -4,7 +4,6 @@ import pandas as pd
 from datetime import date, timedelta, datetime
 import plotly.graph_objects as go
 import io
-import calendar
 
 # --------------------------------------------------
 # CONFIG PAGINA
@@ -16,14 +15,12 @@ st.set_page_config(
 )
 
 # --------------------------------------------------
-# FUNZIONI PER PERIODO ANNUALE
+# PERIODI TEMPORALI
 # --------------------------------------------------
 def get_current_period():
     today = date.today()
-    year = today.year
-
     return {
-        "start_date": date(year, 1, 1),
+        "start_date": date(today.year, 1, 1),
         "end_date": today,
         "label": f"Prezzo Attuale ({today.strftime('%d/%m/%Y')})"
     }
@@ -46,21 +43,24 @@ st.title("📊 Prezzo Attuale vs Min / Max Anno Precedente")
 st.markdown(
     f"""
     **Confronto diretto**
-    - 📅 **Livelli di riferimento**: {previous_period['label']}
-    - 💰 **Prezzo**: ultimo close disponibile
+    - 📅 Livelli di riferimento: **{previous_period['label']}**
+    - 💰 Prezzo: **ultimo close disponibile**
     """
 )
 
 # --------------------------------------------------
-# SIMBOLI DEFAULT
+# SIMBOLI DEFAULT (NON RIDOTTI)
 # --------------------------------------------------
 DEFAULT_SYMBOLS = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA",
-    "JPM", "BAC", "V", "MA",
-    "JNJ", "UNH", "PFE",
-    "KO", "PEP", "WMT",
-    "XOM", "CVX",
-    "SPY", "QQQ"
+    "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA", "NFLX",
+    "AMD", "INTC", "CRM", "ORCL", "ADBE", "PYPL", "IBM", "CSCO", "NOW", "SNOW",
+    "V", "MA", "JPM", "BAC", "WFC", "GS", "MS", "C", "AXP",
+    "JNJ", "PFE", "UNH", "ABBV", "MRK", "TMO", "ABT", "CVS", "AMGN", "GILD",
+    "DIS", "KO", "PEP", "WMT", "HD", "MCD", "SBUX", "NKE", "TGT", "COST",
+    "BA", "CAT", "GE", "MMM", "XOM", "CVX", "COP", "SLB", "EOG", "HAL",
+    "VZ", "T", "TMUS", "CMCSA", "CHTR", "WBD", "FOXA",
+    "SPY", "QQQ", "IWM", "VTI", "VNQ", "AMT", "CCI", "EQIX", "PLD",
+    "ROKU", "SHOP", "ZM", "DOCU", "OKTA", "TWLO", "NET", "DDOG"
 ]
 
 # --------------------------------------------------
@@ -94,32 +94,46 @@ threshold = st.sidebar.slider(
     step=0.5
 )
 
+st.sidebar.info(f"📊 Simboli analizzati: {len(symbols)}")
+
 # --------------------------------------------------
-# DOWNLOAD DATI
+# DOWNLOAD DATI (UNA CHIAMATA PER SIMBOLO)
 # --------------------------------------------------
-@st.cache_data
-def fetch_data(symbol, start, end):
-    ticker = yf.Ticker(symbol)
-    data = ticker.history(start=start, end=end + timedelta(days=1))
-    return data if not data.empty else None
+@st.cache_data(ttl=3600)
+def fetch_full_data(symbol, start, end):
+    try:
+        ticker = yf.Ticker(symbol)
+        data = ticker.history(start=start, end=end + timedelta(days=1))
+        if data.empty:
+            return None
+        return data
+    except Exception:
+        return None
 
 # --------------------------------------------------
 # ANALISI SINGOLO TITOLO
 # --------------------------------------------------
 def analyze(symbol):
-    prev_data = fetch_data(
+    full_data = fetch_full_data(
         symbol,
         previous_period["start_date"],
-        previous_period["end_date"]
-    )
-
-    curr_data = fetch_data(
-        symbol,
-        current_period["start_date"],
         current_period["end_date"]
     )
 
-    if prev_data is None or curr_data is None:
+    if full_data is None or full_data.empty:
+        return None
+
+    prev_data = full_data.loc[
+        (full_data.index.date >= previous_period["start_date"]) &
+        (full_data.index.date <= previous_period["end_date"])
+    ]
+
+    curr_data = full_data.loc[
+        (full_data.index.date >= current_period["start_date"]) &
+        (full_data.index.date <= current_period["end_date"])
+    ]
+
+    if prev_data.empty or curr_data.empty:
         return None
 
     prev_min = prev_data["Low"].min()
@@ -156,18 +170,18 @@ with st.spinner("Analisi in corso..."):
             results.append(r)
 
 # --------------------------------------------------
-# TABELLA CLOSE vs MIN ANNO PRECEDENTE
+# CLOSE vs MIN ANNO PRECEDENTE
 # --------------------------------------------------
-min_hits = [r for r in results if abs(r["diff_min"]) <= threshold]
-
 st.subheader("📉 Close vicino al MINIMO dell’anno precedente")
+
+min_hits = [r for r in results if abs(r["diff_min"]) <= threshold]
 
 if min_hits:
     df_min = pd.DataFrame([
         {
             "Simbolo": r["symbol"],
-            "Min Anno Prec": f"{r['prev_min']:.2f}",
-            "Close Attuale": f"{r['current_close']:.2f}",
+            "Min Anno Prec": round(r["prev_min"], 2),
+            "Close Attuale": round(r["current_close"], 2),
             "Differenza %": round(r["diff_min"], 1),
             "Data Min": r["prev_min_date"].strftime("%d/%m/%Y")
         }
@@ -189,18 +203,18 @@ else:
     st.info("Nessun titolo vicino al minimo dell’anno precedente.")
 
 # --------------------------------------------------
-# TABELLA CLOSE vs MAX ANNO PRECEDENTE
+# CLOSE vs MAX ANNO PRECEDENTE
 # --------------------------------------------------
-max_hits = [r for r in results if abs(r["diff_max"]) <= threshold]
-
 st.subheader("📈 Close vicino al MASSIMO dell’anno precedente")
+
+max_hits = [r for r in results if abs(r["diff_max"]) <= threshold]
 
 if max_hits:
     df_max = pd.DataFrame([
         {
             "Simbolo": r["symbol"],
-            "Max Anno Prec": f"{r['prev_max']:.2f}",
-            "Close Attuale": f"{r['current_close']:.2f}",
+            "Max Anno Prec": round(r["prev_max"], 2),
+            "Close Attuale": round(r["current_close"], 2),
             "Differenza %": round(r["diff_max"], 1),
             "Data Max": r["prev_max_date"].strftime("%d/%m/%Y")
         }
