@@ -22,8 +22,6 @@ if uploaded_file:
 
     # Date di riferimento
     yesterday = datetime.today() - timedelta(days=1)
-    yesterday_str = yesterday.strftime('%Y-%m-%d')
-
     last_year = yesterday.year - 1
     start_date = f"{last_year}-01-01"
     end_date = f"{last_year}-12-31"
@@ -31,31 +29,38 @@ if uploaded_file:
     results = {}
 
     for symbol in symbols:
-        # Scarica dati anno precedente
-        data_last_year = yf.download(symbol, start=start_date, end=end_date)
-        if data_last_year.empty:
-            st.warning(f"Nessun dato disponibile per {symbol} nell'anno precedente")
+        try:
+            # Dati anno precedente
+            data_last_year = yf.download(symbol, start=start_date, end=end_date)
+            if data_last_year.empty:
+                st.warning(f"Nessun dato disponibile per {symbol} nell'anno precedente")
+                continue
+
+            min_low = data_last_year['Low'].min()
+
+            # Dati più recenti usando Ticker.history() → evita KeyError
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(end=yesterday + timedelta(days=1))  # include fino a ieri
+            if hist.empty:
+                st.warning(f"Nessun dato di chiusura disponibile per {symbol} fino a ieri")
+                continue
+
+            # Prendi l'ultima chiusura disponibile
+            close_yesterday = hist['Close'][-1]
+
+            diff_pct = ((close_yesterday - min_low) / min_low) * 100
+
+            # Salva solo se entro la soglia scelta
+            if abs(diff_pct) <= threshold:
+                results[symbol] = {
+                    'Min_Anno_Precedente': min_low,
+                    'Chiusura_Fino_Ieri': close_yesterday,
+                    'Diff_%': diff_pct
+                }
+
+        except Exception as e:
+            st.error(f"Errore con {symbol}: {e}")
             continue
-
-        min_low = data_last_year['Low'].min()
-
-        # Scarica dati fino a ieri e prendi l'ultima chiusura disponibile
-        data_yesterday = yf.download(symbol, end=yesterday_str)
-        if data_yesterday.empty:
-            st.warning(f"Nessun dato di chiusura disponibile per {symbol} fino a ieri")
-            continue
-
-        close_yesterday = data_yesterday['Close'][-1]
-
-        diff_pct = ((close_yesterday - min_low) / min_low) * 100
-
-        # Salva solo se entro la soglia scelta
-        if abs(diff_pct) <= threshold:
-            results[symbol] = {
-                'Min_Anno_Precedente': min_low,
-                'Chiusura_Fino_Ieri': close_yesterday,
-                'Diff_%': diff_pct
-            }
 
     if results:
         df_results = pd.DataFrame(results).T
