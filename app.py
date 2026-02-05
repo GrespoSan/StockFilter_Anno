@@ -4,143 +4,100 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime
 
-# Configurazione della pagina
-st.set_page_config(page_title="Scanner Minimi Anno Precedente", layout="wide")
+st.set_page_config(page_title="Scanner Minimi Pro", layout="wide")
 
-st.title("🎯 Cacciatore di Minimi: Filtro Attivo")
-st.markdown("""
-Questa app mostra **SOLO** i titoli il cui prezzo attuale è vicino al minimo dell'anno scorso 
-entro la soglia percentuale definita nella barra laterale.
-""")
+# --- FIX 1: Inizializzazione Session State ---
+# Questo evita che l'app si resetti quando selezioni un grafico
+if 'df_risultati' not in st.session_state:
+    st.session_state.df_risultati = pd.DataFrame()
 
-# --- Sidebar per Input ---
-st.sidebar.header("Filtri")
+st.title("📉 Scanner Minimi Annuali (Versione Corretta)")
 
-# Lista di default
-default_tickers = "AAPL, MSFT, GOOGL, TSLA, AMZN, NVDA, INT, PFE, KO, XOM"
-tickers_input = st.sidebar.text_area("Inserisci i Ticker (separati da virgola)", default_tickers)
+# --- Sidebar ---
+st.sidebar.header("Parametri di Ricerca")
+tickers_input = st.sidebar.text_area("Ticker (es: AAPL, TSLA, MSFT)", "AAPL, TSLA, MSFT, NVDA, AMZN")
+threshold = st.sidebar.slider("Distanza massima dal minimo (%)", 0, 50, 10)
 
-# SLIDER FONDAMENTALE: Definisce l'intervallo
-threshold = st.sidebar.slider("Mostra solo se la distanza dal minimo è inferiore al (%):", 0, 50, 5)
-
-# Calcolo delle date
 today = datetime.today()
-current_year = today.year
-previous_year = current_year - 1
+prev_year = today.year - 1
 
-st.sidebar.info(f"Confronto con i minimi del: **{previous_year}**")
-
-# --- Funzione di caricamento dati ---
-@st.cache_data(ttl=3600)
-def get_stock_data(ticker_list):
+# --- Funzione Scaricamento ---
+def fetch_data(ticker_list):
     results = []
     tickers = [t.strip().upper() for t in ticker_list.split(",") if t.strip()]
     
-    if not tickers:
-        return []
-
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
+    progress = st.progress(0)
     for i, ticker in enumerate(tickers):
-        status_text.text(f"Analisi {ticker}...")
         try:
-            # Scarichiamo dati dall'anno precedente ad oggi
-            start_date = f"{previous_year}-01-01"
-            data = yf.download(ticker, start=start_date, progress=False, auto_adjust=True)
+            # Scarichiamo un range ampio per coprire tutto l'anno scorso e oggi
+            # Usiamo auto_adjust=False per avere i prezzi 'puri' (più simili a TV)
+            data = yf.download(ticker, start=f"{prev_year}-01-01", progress=False, auto_adjust=False)
             
             if not data.empty:
-                # 1. Filtro dati anno precedente
-                data_prev_year = data[data.index.year == previous_year]
-                
-                if not data_prev_year.empty:
-                    # Gestione colonne (Fix per yfinance updates)
-                    if isinstance(data.columns, pd.MultiIndex):
-                        close_prev = data_prev_year['Close'][ticker]
-                        last_price = data['Close'][ticker].iloc[-1]
-                    else:
-                        close_prev = data_prev_year['Close']
-                        last_price = data['Close'].iloc[-1]
-                        
-                    min_prev_year = close_prev.min()
-
-                    # 2. Calcolo Distanza %
-                    # Formula: (Prezzo - Minimo) / Minimo * 100
-                    diff_percent = ((last_price - min_prev_year) / min_prev_year) * 100
+                # FIX 2: Minimo assoluto (Low) dell'anno scorso, non solo chiusura
+                data_prev = data[data.index.year == prev_year]
+                if not data_prev.empty:
+                    # Usiamo 'Low' per trovare il minimo assoluto della candela (come su TV)
+                    min_absolute = data_prev['Low'].min()
+                    # Prezzo di chiusura di ieri (o ultimo disponibile)
+                    current_price = data['Close'].iloc[-1]
                     
-                    last_date = data.index[-1].strftime('%Y-%m-%d')
-
+                    dist_perc = ((current_price - min_absolute) / min_absolute) * 100
+                    
                     results.append({
                         "Ticker": ticker,
-                        "Prezzo Attuale": float(last_price),
-                        "Data": last_date,
-                        f"Minimo {previous_year}": float(min_prev_year),
-                        "Distanza (%)": float(diff_percent)
+                        "Prezzo Attuale": float(current_price),
+                        f"Minimo {prev_year} (Low)": float(min_absolute),
+                        "Distanza %": float(dist_perc)
                     })
-        except Exception as e:
-            pass # Ignoriamo errori temporanei per non bloccare il loop
-        
-        progress_bar.progress((i + 1) / len(tickers))
-    
-    progress_bar.empty()
-    status_text.empty()
+        except:
+            pass
+        progress.progress((i + 1) / len(tickers))
+    progress.empty()
     return pd.DataFrame(results)
 
-# --- Esecuzione Logica ---
-if st.button("Cerca Titoli nell'Intervallo", type="primary"):
-    with st.spinner('Scansione mercati in corso...'):
-        df = get_stock_data(tickers_input)
+# --- Pulsante Scansione ---
+if st.sidebar.button("Avvia Scansione", type="primary"):
+    st.session_state.df_risultati = fetch_data(tickers_input)
 
-    if not df.empty:
-        # --- FILTRO ATTIVO ---
-        # Teniamo solo le righe dove la distanza % è minore o uguale alla soglia
-        filtered_df = df[df["Distanza (%)"] <= threshold].copy()
+# --- Visualizzazione Risultati ---
+df = st.session_state.df_risultati
+
+if not df.empty:
+    # Applichiamo il filtro dell'intervallo
+    filtered_df = df[df["Distanza %"] <= threshold].sort_values("Distanza %")
+    
+    st.subheader(f"Risultati entro il {threshold}% dal minimo del {prev_year}")
+    st.dataframe(filtered_df.style.format("{:.2f}"), use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # --- FIX 3: Gestione Grafico senza Reset ---
+    st.subheader("Analisi Grafica")
+    # La selectbox ora pesca dai risultati filtrati già presenti in memoria
+    scelta = st.selectbox("Seleziona un titolo per il grafico:", filtered_df["Ticker"].unique())
+
+    if scelta:
+        # Riscarichiamo i dati solo per il grafico selezionato
+        dati_plot = yf.download(scelta, start=f"{prev_year}-01-01", progress=False)
+        min_line = filtered_df[filtered_df["Ticker"] == scelta][f"Minimo {prev_year} (Low)"].values[0]
+
+        fig = go.Figure()
+        # Candlestick per somigliare a TradingView
+        fig.add_trace(go.Candlestick(
+            x=dati_plot.index,
+            open=dati_plot['Open'],
+            high=dati_plot['High'],
+            low=dati_plot['Low'],
+            close=dati_plot['Close'],
+            name=scelta
+        ))
         
-        # Ordiniamo: dai più vicini (o sotto) al minimo a salire
-        filtered_df = filtered_df.sort_values(by="Distanza (%)", ascending=True)
+        # Linea del minimo dell'anno scorso
+        fig.add_hline(y=min_line, line_dash="dash", line_color="red", 
+                      annotation_text=f"Minimo {prev_year}", annotation_position="bottom right")
 
-        # Contatori
-        total_scanned = len(df)
-        found_matches = len(filtered_df)
-
-        if found_matches > 0:
-            st.success(f"Trovati **{found_matches}** titoli su {total_scanned} all'interno del {threshold}% dal minimo.")
-            
-            # Formattazione per la tabella
-            st.dataframe(
-                filtered_df.style.format({
-                    "Prezzo Attuale": "{:.2f}", 
-                    f"Minimo {previous_year}": "{:.2f}", 
-                    "Distanza (%)": "{:+.2f}%" # Mette il + se positivo, - se negativo
-                }).background_gradient(subset=["Distanza (%)"], cmap="RdYlGn_r", vmin=0, vmax=threshold),
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            # --- Grafico (Solo per i filtrati) ---
-            st.divider()
-            st.subheader("Visualizzazione Grafica")
-            
-            # Selectbox contiene solo i titoli filtrati
-            selected_ticker = st.selectbox("Seleziona titolo per dettagli:", filtered_df["Ticker"].unique())
-            
-            if selected_ticker:
-                ticker_data = yf.download(selected_ticker, start=f"{previous_year}-01-01", progress=False, auto_adjust=True)
-                
-                # Recupero dati per grafico
-                if isinstance(ticker_data.columns, pd.MultiIndex):
-                    plot_close = ticker_data['Close'][selected_ticker]
-                else:
-                    plot_close = ticker_data['Close']
-                
-                min_val = filtered_df[filtered_df["Ticker"] == selected_ticker][f"Minimo {previous_year}"].values[0]
-
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=ticker_data.index, y=plot_close, mode='lines', name='Prezzo', line=dict(color='blue')))
-                fig.add_hline(y=min_val, line_dash="dash", line_color="red", annotation_text="Supporto Minimo Prev.", annotation_position="bottom right")
-                
-                fig.update_layout(title=f"{selected_ticker} - Test del Minimo", template="plotly_white", height=450)
-                st.plotly_chart(fig, use_container_width=True)
-
-        else:
-            st
+        fig.update_layout(title=f"Grafico {scelta}", xaxis_rangeslider_visible=False, height=600)
+        st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("Fai clic su 'Avvia Scansione' nella barra laterale per caricare i dati.")
