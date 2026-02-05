@@ -136,10 +136,11 @@ def analyze(symbol):
     if prev_data.empty or curr_data.empty:
         return None
 
-    prev_min = prev_data["Low"].min()
-    prev_max = prev_data["High"].max()
-    prev_min_date = prev_data["Low"].idxmin()
-    prev_max_date = prev_data["High"].idxmax()
+	prev_min = prev_data["Close"].min()
+	prev_max = prev_data["Close"].max()
+	prev_min_date = prev_data["Close"].idxmin()
+	prev_max_date = prev_data["Close"].idxmax()
+
 
     current_close = curr_data["Close"].iloc[-1]
 
