@@ -1,214 +1,64 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from datetime import date, timedelta, datetime
-import io
-import plotly.graph_objects as go
+from datetime import datetime, timedelta
 
-# --------------------------------------------------
-# CONFIGURAZIONE PAGINA
-# --------------------------------------------------
-st.set_page_config(
-    page_title="Close Attuale vs Min/Max Anno Precedente",
-    page_icon="📈",
-    layout="wide"
-)
+st.title("Confronto Prezzo Chiusura Ieri vs Minimo Anno Precedente")
 
-# --------------------------------------------------
-# PERIODI TEMPORALI
-# --------------------------------------------------
-def get_current_period():
-    today = date.today()
-    return {
-        "start_date": date(today.year, 1, 1),
-        "end_date": today,
-        "label": f"Prezzo Attuale ({today.strftime('%d/%m/%Y')})"
-    }
-
-def get_previous_year_period():
-    prev_year = date.today().year - 1
-    return {
-        "start_date": date(prev_year, 1, 1),
-        "end_date": date(prev_year, 12, 31),
-        "label": f"Anno {prev_year}"
-    }
-
-current_period = get_current_period()
-previous_period = get_previous_year_period()
-
-# --------------------------------------------------
-# SIMBOLI DEFAULT
-# --------------------------------------------------
-DEFAULT_SYMBOLS = [
-    "MSFT","GOOGL","AMZN","TSLA","META","NVDA","NFLX",
-    "AMD","INTC","CRM","ORCL","ADBE","PYPL","IBM","CSCO","NOW","SNOW",
-    "V","MA","JPM","BAC","WFC","GS","MS","C","AXP",
-    "JNJ","PFE","UNH","ABBV","MRK","TMO","ABT","CVS","AMGN","GILD",
-    "DIS","KO","PEP","WMT","HD","MCD","SBUX","NKE","TGT","COST",
-    "BA","CAT","GE","MMM","XOM","CVX","COP","SLB","EOG","HAL",
-    "VZ","T","TMUS","CMCSA","CHTR","WBD","FOXA",
-    "SPY","QQQ","IWM","VTI","VNQ","AMT","CCI","EQIX","PLD",
-    "ROKU","SHOP","ZM","DOCU","OKTA","TWLO","NET","DDOG"
-]
-
-# --------------------------------------------------
-# SIDEBAR
-# --------------------------------------------------
-st.sidebar.header("⚙️ Configurazione")
-uploaded_file = st.sidebar.file_uploader(
-    "📁 Carica file TXT con simboli",
-    type=["txt"]
-)
+# Caricamento file simboli
+uploaded_file = st.file_uploader("Carica un file .txt con i simboli (uno per riga)", type="txt")
 
 if uploaded_file:
-    content = uploaded_file.read().decode("utf-8")
-    symbols = list(
-        dict.fromkeys(
-            s.strip().upper()
-            for line in content.splitlines()
-            for s in line.split(",")
-            if s.strip()
-        )
-    )
+    # Legge i simboli dal file
+    symbols = [line.strip().upper() for line in uploaded_file.read().decode("utf-8").splitlines() if line.strip()]
+    
+    st.write(f"Simboli caricati: {symbols}")
+
+    # Soglia percentuale opzionale
+    threshold = st.number_input("Mostra solo titoli entro X% dal minimo dell'anno scorso", min_value=0.0, value=5.0, step=0.1)
+
+    # Calcolo date
+    yesterday = datetime.today() - timedelta(days=1)
+    yesterday_str = yesterday.strftime('%Y-%m-%d')
+
+    last_year = yesterday.year - 1
+    start_date = f"{last_year}-01-01"
+    end_date = f"{last_year}-12-31"
+
+    results = {}
+
+    for symbol in symbols:
+        # Dati anno precedente
+        data_last_year = yf.download(symbol, start=start_date, end=end_date)
+        if data_last_year.empty:
+            st.warning(f"Nessun dato disponibile per {symbol} nell'anno precedente")
+            continue
+
+        min_low = data_last_year['Low'].min()
+
+        # Dati chiusura ieri
+        data_yesterday = yf.download(symbol, start=yesterday_str, end=yesterday_str)
+        if data_yesterday.empty:
+            st.warning(f"Nessun dato di chiusura disponibile per {symbol} ieri")
+            continue
+
+        close_yesterday = data_yesterday['Close'][0]
+
+        diff_pct = ((close_yesterday - min_low) / min_low) * 100
+
+        # Salva solo se entro la soglia scelta
+        if abs(diff_pct) <= threshold:
+            results[symbol] = {
+                'Min_Anno_Precedente': min_low,
+                'Chiusura_Ieri': close_yesterday,
+                'Diff_%': diff_pct
+            }
+
+    if results:
+        df_results = pd.DataFrame(results).T
+        df_results = df_results.sort_values(by='Diff_%')
+        st.dataframe(df_results)
+    else:
+        st.info(f"Nessun titolo entro ±{threshold}% dal minimo dell'anno scorso.")
 else:
-    symbols = DEFAULT_SYMBOLS
-
-threshold = st.sidebar.slider(
-    "🎯 Soglia vicinanza (%)",
-    min_value=1.0,
-    max_value=15.0,
-    value=5.0,
-    step=0.5
-)
-st.sidebar.info(f"📊 Simboli analizzati: {len(symbols)}")
-
-# --------------------------------------------------
-# FETCH DATI YFINANCE
-# --------------------------------------------------
-@st.cache_data(ttl=3600)
-def fetch_full_data_adjusted(symbol, start, end):
-    ticker = yf.Ticker(symbol)
-    data = ticker.history(
-        start=start,
-        end=end + timedelta(days=1),
-        auto_adjust=True  # ✅ prezzi aggiustati
-    )
-    return data if not data.empty else None
-
-# --------------------------------------------------
-# ANALISI SINGOLO TITOLO
-# --------------------------------------------------
-def analyze(symbol):
-    full_data = fetch_full_data_adjusted(
-        symbol,
-        previous_period["start_date"],
-        current_period["end_date"]
-    )
-    if full_data is None or full_data.empty:
-        return None
-
-    prev_data = full_data.loc[
-        (full_data.index.date >= previous_period["start_date"]) &
-        (full_data.index.date <= previous_period["end_date"])
-    ]
-    curr_data = full_data.loc[
-        (full_data.index.date >= current_period["start_date"]) &
-        (full_data.index.date <= current_period["end_date"])
-    ]
-    if prev_data.empty or curr_data.empty:
-        return None
-
-    # 🔹 USO SOLO CLOSE AGGIUSTATO
-    prev_min = prev_data["Close"].min()
-    prev_max = prev_data["Close"].max()
-    prev_min_date = prev_data["Close"].idxmin()
-    prev_max_date = prev_data["Close"].idxmax()
-    current_close = curr_data["Close"].iloc[-1]
-
-    diff_min = (current_close - prev_min) / prev_min * 100
-    diff_max = (current_close - prev_max) / prev_max * 100
-
-    return {
-        "symbol": symbol,
-        "current_close": current_close,
-        "prev_min": prev_min,
-        "prev_max": prev_max,
-        "prev_min_date": prev_min_date,
-        "prev_max_date": prev_max_date,
-        "diff_min": diff_min,
-        "diff_max": diff_max,
-        "prev_data": prev_data,
-        "curr_data": curr_data
-    }
-
-# --------------------------------------------------
-# ESECUZIONE ANALISI
-# --------------------------------------------------
-results = []
-with st.spinner("Analisi in corso..."):
-    for s in symbols:
-        r = analyze(s)
-        if r:
-            results.append(r)
-
-# --------------------------------------------------
-# CLOSE vs MIN ANNO PRECEDENTE
-# --------------------------------------------------
-st.subheader("📉 Close vicino al MINIMO dell’anno precedente")
-min_hits = [r for r in results if abs(r["diff_min"]) <= threshold]
-
-if min_hits:
-    df_min = pd.DataFrame([
-        {
-            "Simbolo": r["symbol"],
-            "Min Anno Prec": round(r["prev_min"], 2),
-            "Close Attuale": round(r["current_close"], 2),
-            "Differenza %": round(r["diff_min"], 1),
-            "Data Min": r["prev_min_date"].strftime("%d/%m/%Y")
-        }
-        for r in min_hits
-    ]).sort_values("Differenza %")
-
-    st.dataframe(df_min, use_container_width=True)
-
-    csv = io.StringIO()
-    df_min.to_csv(csv, index=False)
-    st.download_button(
-        "📥 Scarica CSV (Min Anno Prec)",
-        csv.getvalue(),
-        file_name=f"close_vs_min_anno_prec_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-        mime="text/csv"
-    )
-else:
-    st.info("Nessun titolo vicino al minimo dell’anno precedente.")
-
-# --------------------------------------------------
-# CLOSE vs MAX ANNO PRECEDENTE
-# --------------------------------------------------
-st.subheader("📈 Close vicino al MASSIMO dell’anno precedente")
-max_hits = [r for r in results if abs(r["diff_max"]) <= threshold]
-
-if max_hits:
-    df_max = pd.DataFrame([
-        {
-            "Simbolo": r["symbol"],
-            "Max Anno Prec": round(r["prev_max"], 2),
-            "Close Attuale": round(r["current_close"], 2),
-            "Differenza %": round(r["diff_max"], 1),
-            "Data Max": r["prev_max_date"].strftime("%d/%m/%Y")
-        }
-        for r in max_hits
-    ]).sort_values("Differenza %")
-
-    st.dataframe(df_max, use_container_width=True)
-
-    csv = io.StringIO()
-    df_max.to_csv(csv, index=False)
-    st.download_button(
-        "📥 Scarica CSV (Max Anno Prec)",
-        csv.getvalue(),
-        file_name=f"close_vs_max_anno_prec_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-        mime="text/csv"
-    )
-else:
-    st.info("Nessun titolo vicino al massimo dell’anno precedente.")
+    st.info("Carica un file .txt per iniziare.")
