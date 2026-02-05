@@ -1,7 +1,5 @@
 streamlit
 yfinance
-scipy
 pandas
-numpy
 plotly
-requests
+matplotlib
