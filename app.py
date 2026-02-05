@@ -44,12 +44,12 @@ st.markdown(
     f"""
     **Confronto diretto**
     - 📅 Livelli di riferimento: **{previous_period['label']}**
-    - 💰 Prezzo: **ultimo close disponibile**
+    - 💰 Prezzo: **ultimo close (aggiustato)**
     """
 )
 
 # --------------------------------------------------
-# SIMBOLI DEFAULT (NON RIDOTTI)
+# SIMBOLI DEFAULT
 # --------------------------------------------------
 DEFAULT_SYMBOLS = [
     "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA", "NFLX",
@@ -97,13 +97,17 @@ threshold = st.sidebar.slider(
 st.sidebar.info(f"📊 Simboli analizzati: {len(symbols)}")
 
 # --------------------------------------------------
-# DOWNLOAD DATI (UNA CHIAMATA PER SIMBOLO)
+# DOWNLOAD DATI (PREZZI AGGIUSTATI)
 # --------------------------------------------------
 @st.cache_data(ttl=3600)
 def fetch_full_data(symbol, start, end):
     try:
         ticker = yf.Ticker(symbol)
-        data = ticker.history(start=start, end=end + timedelta(days=1))
+        data = ticker.history(
+            start=start,
+            end=end + timedelta(days=1),
+            auto_adjust=True   # 🔥 FIX FONDAMENTALE
+        )
         if data.empty:
             return None
         return data
