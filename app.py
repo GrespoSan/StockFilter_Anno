@@ -99,26 +99,22 @@ st.sidebar.info(f"📊 Simboli analizzati: {len(symbols)}")
 # --------------------------------------------------
 # DOWNLOAD DATI (PREZZI AGGIUSTATI)
 # --------------------------------------------------
+# Nuova funzione: cache separata per forzare refresh
 @st.cache_data(ttl=3600)
-def fetch_full_data(symbol, start, end):
-    try:
-        ticker = yf.Ticker(symbol)
-        data = ticker.history(
-            start=start,
-            end=end + timedelta(days=1),
-            auto_adjust=True   # 🔥 FIX FONDAMENTALE
-        )
-        if data.empty:
-            return None
-        return data
-    except Exception:
-        return None
+def fetch_full_data_adjusted(symbol, start, end):
+    ticker = yf.Ticker(symbol)
+    data = ticker.history(
+        start=start,
+        end=end + timedelta(days=1),
+        auto_adjust=True   # 🔥 FIX FONDAMENTALE
+    )
+    return data if not data.empty else None
 
 # --------------------------------------------------
 # ANALISI SINGOLO TITOLO
 # --------------------------------------------------
 def analyze(symbol):
-    full_data = fetch_full_data(
+    full_data = fetch_full_data_adjusted(
         symbol,
         previous_period["start_date"],
         current_period["end_date"]
