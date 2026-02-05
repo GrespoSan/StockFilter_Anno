@@ -2,14 +2,14 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 from datetime import date, timedelta, datetime
-import plotly.graph_objects as go
 import io
+import plotly.graph_objects as go
 
 # --------------------------------------------------
-# CONFIG PAGINA
+# CONFIGURAZIONE PAGINA
 # --------------------------------------------------
 st.set_page_config(
-    page_title="Prezzo Attuale vs Min/Max Anno Precedente",
+    page_title="Close Attuale vs Min/Max Anno Precedente",
     page_icon="📈",
     layout="wide"
 )
@@ -37,37 +37,24 @@ current_period = get_current_period()
 previous_period = get_previous_year_period()
 
 # --------------------------------------------------
-# TITOLI
-# --------------------------------------------------
-st.title("📊 Prezzo Attuale vs Min / Max Anno Precedente")
-st.markdown(
-    f"""
-    **Confronto diretto**
-    - 📅 Livelli di riferimento: **{previous_period['label']}**
-    - 💰 Prezzo: **ultimo close (aggiustato)**
-    """
-)
-
-# --------------------------------------------------
 # SIMBOLI DEFAULT
 # --------------------------------------------------
 DEFAULT_SYMBOLS = [
-    "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA", "NFLX",
-    "AMD", "INTC", "CRM", "ORCL", "ADBE", "PYPL", "IBM", "CSCO", "NOW", "SNOW",
-    "V", "MA", "JPM", "BAC", "WFC", "GS", "MS", "C", "AXP",
-    "JNJ", "PFE", "UNH", "ABBV", "MRK", "TMO", "ABT", "CVS", "AMGN", "GILD",
-    "DIS", "KO", "PEP", "WMT", "HD", "MCD", "SBUX", "NKE", "TGT", "COST",
-    "BA", "CAT", "GE", "MMM", "XOM", "CVX", "COP", "SLB", "EOG", "HAL",
-    "VZ", "T", "TMUS", "CMCSA", "CHTR", "WBD", "FOXA",
-    "SPY", "QQQ", "IWM", "VTI", "VNQ", "AMT", "CCI", "EQIX", "PLD",
-    "ROKU", "SHOP", "ZM", "DOCU", "OKTA", "TWLO", "NET", "DDOG"
+    "MSFT","GOOGL","AMZN","TSLA","META","NVDA","NFLX",
+    "AMD","INTC","CRM","ORCL","ADBE","PYPL","IBM","CSCO","NOW","SNOW",
+    "V","MA","JPM","BAC","WFC","GS","MS","C","AXP",
+    "JNJ","PFE","UNH","ABBV","MRK","TMO","ABT","CVS","AMGN","GILD",
+    "DIS","KO","PEP","WMT","HD","MCD","SBUX","NKE","TGT","COST",
+    "BA","CAT","GE","MMM","XOM","CVX","COP","SLB","EOG","HAL",
+    "VZ","T","TMUS","CMCSA","CHTR","WBD","FOXA",
+    "SPY","QQQ","IWM","VTI","VNQ","AMT","CCI","EQIX","PLD",
+    "ROKU","SHOP","ZM","DOCU","OKTA","TWLO","NET","DDOG"
 ]
 
 # --------------------------------------------------
 # SIDEBAR
 # --------------------------------------------------
 st.sidebar.header("⚙️ Configurazione")
-
 uploaded_file = st.sidebar.file_uploader(
     "📁 Carica file TXT con simboli",
     type=["txt"]
@@ -93,20 +80,18 @@ threshold = st.sidebar.slider(
     value=5.0,
     step=0.5
 )
-
 st.sidebar.info(f"📊 Simboli analizzati: {len(symbols)}")
 
 # --------------------------------------------------
-# DOWNLOAD DATI (PREZZI AGGIUSTATI)
+# FETCH DATI YFINANCE
 # --------------------------------------------------
-# Nuova funzione: cache separata per forzare refresh
 @st.cache_data(ttl=3600)
 def fetch_full_data_adjusted(symbol, start, end):
     ticker = yf.Ticker(symbol)
     data = ticker.history(
         start=start,
         end=end + timedelta(days=1),
-        auto_adjust=True   # 🔥 FIX FONDAMENTALE
+        auto_adjust=True  # ✅ prezzi aggiustati
     )
     return data if not data.empty else None
 
@@ -119,7 +104,6 @@ def analyze(symbol):
         previous_period["start_date"],
         current_period["end_date"]
     )
-
     if full_data is None or full_data.empty:
         return None
 
@@ -127,21 +111,18 @@ def analyze(symbol):
         (full_data.index.date >= previous_period["start_date"]) &
         (full_data.index.date <= previous_period["end_date"])
     ]
-
     curr_data = full_data.loc[
         (full_data.index.date >= current_period["start_date"]) &
         (full_data.index.date <= current_period["end_date"])
     ]
-
     if prev_data.empty or curr_data.empty:
         return None
 
-	prev_min = prev_data["Close"].min()
-	prev_max = prev_data["Close"].max()
-	prev_min_date = prev_data["Close"].idxmin()
-	prev_max_date = prev_data["Close"].idxmax()
-
-
+    # 🔹 USO SOLO CLOSE AGGIUSTATO
+    prev_min = prev_data["Close"].min()
+    prev_max = prev_data["Close"].max()
+    prev_min_date = prev_data["Close"].idxmin()
+    prev_max_date = prev_data["Close"].idxmax()
     current_close = curr_data["Close"].iloc[-1]
 
     diff_min = (current_close - prev_min) / prev_min * 100
@@ -174,7 +155,6 @@ with st.spinner("Analisi in corso..."):
 # CLOSE vs MIN ANNO PRECEDENTE
 # --------------------------------------------------
 st.subheader("📉 Close vicino al MINIMO dell’anno precedente")
-
 min_hits = [r for r in results if abs(r["diff_min"]) <= threshold]
 
 if min_hits:
@@ -193,7 +173,6 @@ if min_hits:
 
     csv = io.StringIO()
     df_min.to_csv(csv, index=False)
-
     st.download_button(
         "📥 Scarica CSV (Min Anno Prec)",
         csv.getvalue(),
@@ -207,7 +186,6 @@ else:
 # CLOSE vs MAX ANNO PRECEDENTE
 # --------------------------------------------------
 st.subheader("📈 Close vicino al MASSIMO dell’anno precedente")
-
 max_hits = [r for r in results if abs(r["diff_max"]) <= threshold]
 
 if max_hits:
@@ -226,7 +204,6 @@ if max_hits:
 
     csv = io.StringIO()
     df_max.to_csv(csv, index=False)
-
     st.download_button(
         "📥 Scarica CSV (Max Anno Prec)",
         csv.getvalue(),
